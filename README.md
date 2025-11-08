@@ -1,23 +1,6 @@
 # goaubio-onset
 
-A pure Go implementation of the aubio onset detection library. This library transpiles the onset detection functionality from the [aubio](https://aubio.org) C library to pure Go, with no CGO dependencies.
-
-## Features
-
-- **Pure Go**: No CGO, fully portable Go implementation
-- **Multiple onset detection methods**: 
-  - Energy
-  - High Frequency Content (HFC)
-  - Complex Domain
-  - Phase-based
-  - Weighted Phase
-  - Spectral Difference
-  - Kullback-Liebler (KL)
-  - Modified Kullback-Liebler (MKL)
-  - Spectral Flux
-- **Configurable parameters**: Threshold, silence detection, minimum inter-onset interval
-- **Adaptive spectral whitening**: Optional preprocessing for improved detection
-- **Peak picking**: Robust peak detection with filtering
+A pure Go implementation of the aubio onset detection library for audio slice detection and analysis.
 
 ## Installation
 
@@ -25,53 +8,63 @@ A pure Go implementation of the aubio onset detection library. This library tran
 go get github.com/schollz/goaubio-onset
 ```
 
-## Usage
-
-Here's a simple example of how to use the library:
+## Quick Start
 
 ```go
 package main
 
 import (
     "fmt"
-    "math"
-    
+    "log"
+
     "github.com/schollz/goaubio-onset"
 )
 
 func main() {
-    // Create onset detector
-    bufSize := uint(512)
-    hopSize := uint(256)
-    samplerate := uint(44100)
-    
-    o := onset.NewOnset("hfc", bufSize, hopSize, samplerate)
-    
-    // Create buffers
-    input := onset.NewFvec(hopSize)
-    output := onset.NewFvec(1)
-    
-    // Process audio frames
-    for {
-        // Fill input buffer with audio data
-        // ... (read from file, stream, etc.)
-        
-        // Detect onsets
-        o.Do(input, output)
-        
-        // Check if onset was detected
-        if output.Data[0] > 0 {
-            fmt.Printf("Onset detected at %.2f ms\n", o.GetLastMs())
-        }
+    // Analyze a WAV file for onsets
+    result, err := onset.AnalyzeSlices("audio.wav", onset.DefaultSliceAnalyzerOptions())
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Printf("Found %d onsets:\n", len(result.Onsets))
+    for i, onsetTime := range result.Onsets {
+        fmt.Printf("  %d: %.4f seconds\n", i+1, onsetTime)
     }
 }
 ```
 
-## Onset Detection Methods
+## Customizing Options
 
-- **`energy`**: Energy-based onset detection
-- **`hfc`** (default): High Frequency Content - good for percussive sounds
-- **`complex`**: Complex Domain Method - robust for various sound types
+```go
+options := onset.SliceAnalyzerOptions{
+    NumSlices:        8,      // Number of slices to find (0 = all)
+    Method:           "hfc",  // Detection method
+    Optimize:         true,   // Optimize onset positions
+    OptimizeWindowMs: 15.0,   // Optimization window (ms)
+}
+
+result, err := onset.AnalyzeSlices("audio.wav", options)
+```
+
+### Recommended Settings for Best Results
+
+For high-quality onset detection:
+```go
+options := onset.SliceAnalyzerOptions{
+    NumSlices:        32,
+    Method:           "hfc",
+    Optimize:         true,
+    OptimizeWindowMs: 15.0,
+}
+```
+
+## Detection Methods
+
+- **`hfc`** (recommended): High Frequency Content - best for percussive sounds
+- **`consensus`**: Uses all methods and finds agreement (robust but slower)
+- **`energy`**: Energy-based detection
+- **`complex`**: Complex Domain Method
 - **`phase`**: Phase-based detection
 - **`wphase`**: Weighted Phase Deviation
 - **`specdiff`**: Spectral Difference
@@ -79,120 +72,129 @@ func main() {
 - **`mkl`**: Modified Kullback-Liebler
 - **`specflux`**: Spectral Flux
 
-## Configuration
+### Consensus Method Options
 
-The onset detector can be configured with various parameters:
+The `consensus` method runs all detection methods and clusters their results:
 
 ```go
-o := onset.NewOnset("hfc", bufSize, hopSize, samplerate)
-
-// Set detection threshold (0.0 - 1.0)
-o.SetThreshold(0.3)
-
-// Set silence threshold in dB
-o.SetSilence(-70.0)
-
-// Set minimum inter-onset interval in milliseconds
-o.SetMinioiMs(50.0)
-
-// Enable adaptive whitening
-o.SetAWhitening(true)
-
-// Set compression (for logarithmic magnitude)
-o.SetCompression(1.0)
+options := onset.SliceAnalyzerOptions{
+    Method:                  "consensus",
+    MinConsensusClusterSize: 3,  // Minimum methods that must agree (default: 3)
+}
 ```
+
+## Command-Line Tool
+
+Build and use the slice analyzer tool:
+
+```bash
+cd examples/slice-analyzer
+go build
+./slice-analyzer -file audio.wav -slices 32 --method hfc --optimize --optimize-window 15
+```
+
+Options:
+- `-file`: Path to WAV file (required)
+- `-slices`: Number of slices to find (default: 8, 0 = all)
+- `-method`: Detection method (default: hfc)
+- `-optimize`: Optimize onset positions (default: true)
+- `-optimize-window`: Optimization window in ms (default: 100.0)
+- `-min-consensus-cluster`: Min cluster size for consensus method (default: 3)
+- `-output`: Output HTML file (default: waveform.html)
 
 ## API Reference
 
-### Main Types
+### SliceAnalyzerOptions
 
-#### `Onset`
-
-The main onset detection object.
-
-**Constructor:**
 ```go
-func NewOnset(onsetMode string, bufSize, hopSize, samplerate uint) *Onset
+type SliceAnalyzerOptions struct {
+    // Number of slices to find (0 = all onsets)
+    NumSlices int
+
+    // Optimize onset positions using variance analysis
+    Optimize bool
+
+    // Optimization window size in milliseconds
+    OptimizeWindowMs float64
+
+    // Detection method: "hfc", "energy", "consensus", etc.
+    Method string
+
+    // Minimum cluster size for consensus method (default: 3)
+    MinConsensusClusterSize int
+}
 ```
 
-**Methods:**
-- `Do(input *Fvec, onset *Fvec)` - Process input and detect onsets
-- `GetLast() uint` - Get last onset time in samples
-- `GetLastS() float64` - Get last onset time in seconds
-- `GetLastMs() float64` - Get last onset time in milliseconds
-- `SetThreshold(threshold float64)` - Set peak picking threshold
-- `SetSilence(silence float64)` - Set silence threshold in dB
-- `SetMinioi(minioi uint)` - Set minimum inter-onset interval in samples
-- `SetMinioiMs(minioi float64)` - Set minimum inter-onset interval in ms
-- `SetAWhitening(enable bool)` - Enable/disable adaptive whitening
-- `SetCompression(lambda float64)` - Set compression factor
-- `Reset()` - Reset the detector state
+### SliceAnalyzerResult
 
-#### `Fvec`
-
-Vector of real-valued floating point data.
-
-**Constructor:**
 ```go
-func NewFvec(length uint) *Fvec
+type SliceAnalyzerResult struct {
+    // Detected onset times in seconds
+    Onsets []float64
+
+    // Audio samples (left channel)
+    Samples []float64
+
+    // Sample rate
+    SampleRate uint
+}
 ```
 
-#### `Cvec`
+### Functions
 
-Vector of complex-valued data stored in polar form (magnitude and phase).
-
-**Constructor:**
 ```go
-func NewCvec(length uint) *Cvec
+// Analyze a WAV file for onsets
+func AnalyzeSlices(wavFile string, options SliceAnalyzerOptions) (*SliceAnalyzerResult, error)
+
+// Get default options
+func DefaultSliceAnalyzerOptions() SliceAnalyzerOptions
 ```
+
+## Low-Level API
+
+For streaming or custom audio processing:
+
+```go
+// Create onset detector
+o := onset.NewOnset("hfc", 512, 256, 44100)
+o.SetThreshold(0.3)
+o.SetMinioiMs(50.0)
+
+// Create buffers
+input := onset.NewFvec(256)
+output := onset.NewFvec(1)
+
+// Process frames
+for {
+    // Fill input.Data with audio samples
+    o.Do(input, output)
+
+    if output.Data[0] > 0 {
+        fmt.Printf("Onset at %.2f ms\n", o.GetLastMs())
+    }
+}
+```
+
+## Features
+
+- **Pure Go**: No CGO dependencies, fully portable
+- **High-level API**: Simple slice analysis with automatic optimization
+- **Multiple detection methods**: 9 different onset detection algorithms
+- **Consensus detection**: Combines all methods for robust results
+- **Outlier removal**: Filters anomalous detections in consensus mode
+- **Position optimization**: Refines onset positions using variance analysis
+- **Energy-based selection**: Automatically selects the N best onsets by energy
 
 ## Testing
-
-Run the tests with:
 
 ```bash
 go test -v
 ```
 
-Run benchmarks:
+## About
 
-```bash
-go test -bench=.
-```
-
-## Examples
-
-### Basic Usage Example
-
-See the [example](./example/main.go) directory for a complete working example of onset detection.
-
-```bash
-cd example
-go run main.go
-```
-
-### Slice Analyzer with Visualization
-
-The [slice-analyzer](./examples/slice-analyzer/) example demonstrates:
-- Loading audio files (left channel only, no merging for stereo)
-- Automatic parameter optimization to find N onset slices
-- Generating waveform plots with onset markers
-
-```bash
-cd examples/slice-analyzer
-go build
-./slice-analyzer -file ../../amen.wav -slices 8 -output waveform.png
-```
-
-## About Aubio
-
-This library is a transpilation of the onset detection functionality from [aubio](https://github.com/aubio/aubio), a library for audio and music analysis. The original aubio library is written in C and is used extensively in music information retrieval applications.
+This library is a Go implementation of onset detection from [aubio](https://github.com/aubio/aubio), a library for audio and music analysis by Paul Brossier.
 
 ## License
 
-This implementation follows the GPL-3.0 license, consistent with the original aubio library.
-
-## Credits
-
-- Original aubio library by Paul Brossier
-- Go implementation/transpilation for this project
+GPL-3.0 (consistent with the original aubio library)
