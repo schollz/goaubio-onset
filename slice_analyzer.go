@@ -31,6 +31,11 @@ type SliceAnalyzerOptions struct {
 	// OptimizeWindowMs specifies the window size in milliseconds for onset optimization.
 	// Default is 100.0 ms.
 	OptimizeWindowMs float64
+	// Method specifies the onset detection method to use.
+	// Supported methods: "hfc", "energy", "complex", "phase", "wphase", "specdiff", "kl", "mkl", "specflux", "consensus"
+	// Default is "hfc" if empty.
+	// The special "consensus" method uses all methods and generates consensus markers.
+	Method string
 }
 
 // DefaultSliceAnalyzerOptions returns default options for slice analysis
@@ -39,6 +44,7 @@ func DefaultSliceAnalyzerOptions() SliceAnalyzerOptions {
 		NumSlices:        0,
 		Optimize:         true,
 		OptimizeWindowMs: 100.0,
+		Method:           "hfc",
 	}
 }
 
@@ -59,14 +65,23 @@ func AnalyzeSlices(wavFile string, options SliceAnalyzerOptions) (*SliceAnalyzer
 		return nil, fmt.Errorf("failed to read audio file: %w", err)
 	}
 
+	// Default to "hfc" if method is not specified
+	method := options.Method
+	if method == "" {
+		method = "hfc"
+	}
+
 	var onsets []float64
 
-	if options.NumSlices > 0 {
+	if method == "consensus" {
+		// Use consensus method: run all methods and generate consensus
+		onsets = findConsensusOnsets(samples, sampleRate, options.NumSlices)
+	} else if options.NumSlices > 0 {
 		// Find the best N onsets based on energy
-		onsets = findBestOnsets(samples, sampleRate, options.NumSlices)
+		onsets = findBestOnsets(samples, sampleRate, options.NumSlices, method)
 	} else {
 		// Find all onsets
-		onsets = findAllOnsets(samples, sampleRate)
+		onsets = findAllOnsets(samples, sampleRate, method)
 	}
 
 	// Optimize onset positions if requested
@@ -123,10 +138,9 @@ type onsetWithEnergy struct {
 
 // findBestOnsets uses onset detection to find the best N onsets in the audio.
 // The "best" onsets are those with the highest energy/loudness.
-func findBestOnsets(samples []float64, sampleRate uint, targetSlices int) []float64 {
+func findBestOnsets(samples []float64, sampleRate uint, targetSlices int, method string) []float64 {
 	bufSize := uint(512)
 	hopSize := uint(256)
-	method := "hfc" // High Frequency Content method
 
 	// Detect all onsets with relaxed parameters to get more candidates
 	allOnsets := detectAllOnsets(samples, sampleRate, method, bufSize, hopSize)
@@ -172,12 +186,109 @@ func findBestOnsets(samples []float64, sampleRate uint, targetSlices int) []floa
 }
 
 // findAllOnsets detects all onsets in the audio with default parameters
-func findAllOnsets(samples []float64, sampleRate uint) []float64 {
+func findAllOnsets(samples []float64, sampleRate uint, method string) []float64 {
 	bufSize := uint(512)
 	hopSize := uint(256)
-	method := "hfc" // High Frequency Content method
 
 	return detectAllOnsets(samples, sampleRate, method, bufSize, hopSize)
+}
+
+// findConsensusOnsets runs all detection methods and generates consensus markers
+// by clustering nearby onsets and taking the midpoint of each cluster
+func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) []float64 {
+	bufSize := uint(512)
+	hopSize := uint(256)
+
+	// All available methods
+	methods := []string{"energy", "hfc", "complex", "phase", "wphase", "specdiff", "kl", "mkl", "specflux"}
+
+	// Collect all onsets from all methods
+	var allOnsets []float64
+	for _, method := range methods {
+		methodOnsets := detectAllOnsets(samples, sampleRate, method, bufSize, hopSize)
+		allOnsets = append(allOnsets, methodOnsets...)
+	}
+
+	if len(allOnsets) == 0 {
+		return []float64{}
+	}
+
+	// Sort all onsets by time
+	sort.Float64s(allOnsets)
+
+	// Cluster nearby onsets together
+	// Two onsets are in the same cluster if they're within clusterThreshold seconds
+	clusterThreshold := 0.05 // 50ms threshold for clustering
+
+	var consensusOnsets []float64
+	currentCluster := []float64{allOnsets[0]}
+
+	for i := 1; i < len(allOnsets); i++ {
+		if allOnsets[i]-currentCluster[len(currentCluster)-1] <= clusterThreshold {
+			// Add to current cluster
+			currentCluster = append(currentCluster, allOnsets[i])
+		} else {
+			// Finalize current cluster and start a new one
+			consensusOnsets = append(consensusOnsets, calculateClusterMidpoint(currentCluster))
+			currentCluster = []float64{allOnsets[i]}
+		}
+	}
+
+	// Don't forget the last cluster
+	if len(currentCluster) > 0 {
+		consensusOnsets = append(consensusOnsets, calculateClusterMidpoint(currentCluster))
+	}
+
+	// If targetSlices is specified, select the best N based on cluster size and energy
+	if targetSlices > 0 && len(consensusOnsets) > targetSlices {
+		// For consensus, we could rank by cluster size (more methods agreeing)
+		// But for simplicity, we'll use energy like in findBestOnsets
+		onsetsWithEnergy := make([]onsetWithEnergy, len(consensusOnsets))
+		for i, onsetTime := range consensusOnsets {
+			energy := calculateOnsetEnergy(samples, sampleRate, onsetTime)
+			onsetsWithEnergy[i] = onsetWithEnergy{
+				time:   onsetTime,
+				energy: energy,
+			}
+		}
+
+		// Sort by energy (descending)
+		sort.Slice(onsetsWithEnergy, func(i, j int) bool {
+			return onsetsWithEnergy[i].energy > onsetsWithEnergy[j].energy
+		})
+
+		// Take top N onsets
+		bestOnsets := onsetsWithEnergy[:targetSlices]
+
+		// Sort back by time for output
+		sort.Slice(bestOnsets, func(i, j int) bool {
+			return bestOnsets[i].time < bestOnsets[j].time
+		})
+
+		// Extract just the times
+		result := make([]float64, len(bestOnsets))
+		for i, onset := range bestOnsets {
+			result[i] = onset.time
+		}
+
+		return result
+	}
+
+	return consensusOnsets
+}
+
+// calculateClusterMidpoint calculates the midpoint of a cluster of onset times
+func calculateClusterMidpoint(cluster []float64) float64 {
+	if len(cluster) == 0 {
+		return 0.0
+	}
+
+	sum := 0.0
+	for _, time := range cluster {
+		sum += time
+	}
+
+	return sum / float64(len(cluster))
 }
 
 // detectAllOnsets detects all onsets with relaxed parameters
