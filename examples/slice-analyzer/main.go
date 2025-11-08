@@ -20,6 +20,8 @@ func main() {
 	soundFile := flag.String("file", "", "Path to the sound file (required)")
 	numSlices := flag.Int("slices", 8, "Number of slices to find (default: 8)")
 	outputFile := flag.String("output", "waveform.html", "Output HTML file (default: waveform.html)")
+	optimizeOnsets := flag.Bool("optimize", true, "Optimize onset positions using RMS differential (default: true)")
+	optimizeWindowMs := flag.Float64("optimize-window", 100.0, "Window size in milliseconds for onset optimization (default: 100.0)")
 	flag.Parse()
 
 	if *soundFile == "" {
@@ -50,6 +52,12 @@ func main() {
 
 	if len(onsets) == 0 {
 		log.Fatal("No onsets detected. Try adjusting parameters or using a different audio file.")
+	}
+
+	// Optimize onset positions if requested
+	if *optimizeOnsets {
+		fmt.Printf("Optimizing onset positions...\n")
+		onsets = optimizeOnsetPositions(samples, sampleRate, onsets, *optimizeWindowMs)
 	}
 
 	fmt.Printf("Found %d onsets:\n", len(onsets))
@@ -210,6 +218,102 @@ func calculateOnsetEnergy(samples []float64, sampleRate uint, onsetTime float64)
 	return math.Sqrt(sumSquares / float64(count))
 }
 
+
+// optimizeOnsetPositions refines onset positions by finding the point of maximum variance difference
+// within a window around each detected onset
+func optimizeOnsetPositions(samples []float64, sampleRate uint, onsets []float64, windowMs float64) []float64 {
+	optimized := make([]float64, len(onsets))
+
+	for i, onsetTime := range onsets {
+		optimized[i] = findOptimalOnsetPosition(samples, sampleRate, onsetTime, windowMs)
+	}
+
+	return optimized
+}
+
+// findOptimalOnsetPosition finds the exact onset position by locating the midpoint
+// with the maximum variance difference between right and left sides within a window
+func findOptimalOnsetPosition(samples []float64, sampleRate uint, onsetTime float64, windowMs float64) float64 {
+	// Convert onset time to sample index
+	onsetSample := int(onsetTime * float64(sampleRate))
+
+	// Calculate window size in samples (centered around onset)
+	windowSamples := int(windowMs * float64(sampleRate) / 1000.0)
+	halfWindow := windowSamples / 2
+
+	// Define search window boundaries
+	windowStart := onsetSample - halfWindow
+	windowEnd := onsetSample + halfWindow
+
+	// Clamp to valid range
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	if windowEnd > len(samples) {
+		windowEnd = len(samples)
+	}
+
+	// If window is too small, return original onset
+	if windowEnd-windowStart < 10 {
+		return onsetTime
+	}
+
+	// Search for the midpoint with maximum variance difference
+	maxDiff := -math.MaxFloat64
+	bestPosition := onsetSample
+
+	// Try each position in the window as a potential midpoint
+	// Leave some margin on both sides to calculate variance
+	minMargin := 5 // minimum samples on each side
+	for midpoint := windowStart + minMargin; midpoint < windowEnd-minMargin; midpoint++ {
+		// Calculate variance of left side (from window start to midpoint)
+		leftVariance := calculateVariance(samples, windowStart, midpoint)
+
+		// Calculate variance of right side (from midpoint to window end)
+		rightVariance := calculateVariance(samples, midpoint, windowEnd)
+
+		// Calculate difference (right - left)
+		// Positive difference means signal variance increases at this point (onset characteristic)
+		diff := rightVariance - leftVariance
+
+		// Track maximum difference
+		if diff > maxDiff {
+			maxDiff = diff
+			bestPosition = midpoint
+		}
+	}
+
+	// Convert best position back to time
+	return float64(bestPosition) / float64(sampleRate)
+}
+
+// calculateVariance computes the variance of a sample range
+func calculateVariance(samples []float64, start, end int) float64 {
+	if start >= end || start < 0 || end > len(samples) {
+		return 0.0
+	}
+
+	count := end - start
+	if count == 0 {
+		return 0.0
+	}
+
+	// Calculate mean
+	sum := 0.0
+	for i := start; i < end; i++ {
+		sum += samples[i]
+	}
+	mean := sum / float64(count)
+
+	// Calculate variance
+	sumSquaredDiff := 0.0
+	for i := start; i < end; i++ {
+		diff := samples[i] - mean
+		sumSquaredDiff += diff * diff
+	}
+
+	return sumSquaredDiff / float64(count)
+}
 
 // detectOnsets processes audio samples and returns onset times in seconds
 func detectOnsets(samples []float64, sampleRate uint, method string, bufSize, hopSize uint, threshold float64, minioi float64) []float64 {
