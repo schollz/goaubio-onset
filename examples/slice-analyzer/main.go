@@ -20,6 +20,7 @@ func main() {
 	optimizeOnsets := flag.Bool("optimize", true, "Optimize onset positions using RMS differential (default: true)")
 	optimizeWindowMs := flag.Float64("optimize-window", 100.0, "Window size in milliseconds for onset optimization (default: 100.0)")
 	method := flag.String("method", "hfc", "Onset detection method: hfc, energy, complex, phase, wphase, specdiff, kl, mkl, specflux, consensus (default: hfc)")
+	minConsensusClusterSize := flag.Int("min-consensus-cluster", 3, "Minimum cluster size for consensus method (default: 3)")
 	flag.Parse()
 
 	if *soundFile == "" {
@@ -35,10 +36,11 @@ func main() {
 
 	// Use the slice analyzer API
 	options := onset.SliceAnalyzerOptions{
-		NumSlices:        *numSlices,
-		Optimize:         *optimizeOnsets,
-		OptimizeWindowMs: *optimizeWindowMs,
-		Method:           *method,
+		NumSlices:               *numSlices,
+		Optimize:                *optimizeOnsets,
+		OptimizeWindowMs:        *optimizeWindowMs,
+		Method:                  *method,
+		MinConsensusClusterSize: *minConsensusClusterSize,
 	}
 
 	result, err := onset.AnalyzeSlices(*soundFile, options)

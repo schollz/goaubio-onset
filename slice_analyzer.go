@@ -36,15 +36,20 @@ type SliceAnalyzerOptions struct {
 	// Default is "hfc" if empty.
 	// The special "consensus" method uses all methods and generates consensus markers.
 	Method string
+	// MinConsensusClusterSize specifies the minimum number of onset markers required
+	// for a cluster to be considered valid when using the "consensus" method.
+	// Default is 3. Only applies when Method is "consensus".
+	MinConsensusClusterSize int
 }
 
 // DefaultSliceAnalyzerOptions returns default options for slice analysis
 func DefaultSliceAnalyzerOptions() SliceAnalyzerOptions {
 	return SliceAnalyzerOptions{
-		NumSlices:        0,
-		Optimize:         true,
-		OptimizeWindowMs: 100.0,
-		Method:           "hfc",
+		NumSlices:               0,
+		Optimize:                true,
+		OptimizeWindowMs:        100.0,
+		Method:                  "hfc",
+		MinConsensusClusterSize: 3,
 	}
 }
 
@@ -75,7 +80,7 @@ func AnalyzeSlices(wavFile string, options SliceAnalyzerOptions) (*SliceAnalyzer
 
 	if method == "consensus" {
 		// Use consensus method: run all methods and generate consensus
-		onsets = findConsensusOnsets(samples, sampleRate, options.NumSlices)
+		onsets = findConsensusOnsets(samples, sampleRate, options)
 	} else if options.NumSlices > 0 {
 		// Find the best N onsets based on energy
 		onsets = findBestOnsets(samples, sampleRate, options.NumSlices, method)
@@ -195,7 +200,7 @@ func findAllOnsets(samples []float64, sampleRate uint, method string) []float64 
 
 // findConsensusOnsets runs all detection methods and generates consensus markers
 // by clustering nearby onsets and taking the midpoint of each cluster
-func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) []float64 {
+func findConsensusOnsets(samples []float64, sampleRate uint, options SliceAnalyzerOptions) []float64 {
 	bufSize := uint(512)
 	hopSize := uint(256)
 
@@ -220,6 +225,12 @@ func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) [
 	// Two onsets are in the same cluster if they're within clusterThreshold seconds
 	clusterThreshold := 0.05 // 50ms threshold for clustering
 
+	// Default minimum cluster size to 3 if not set
+	minClusterSize := options.MinConsensusClusterSize
+	if minClusterSize <= 0 {
+		minClusterSize = 3
+	}
+
 	var consensusOnsets []float64
 	currentCluster := []float64{allOnsets[0]}
 
@@ -228,19 +239,21 @@ func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) [
 			// Add to current cluster
 			currentCluster = append(currentCluster, allOnsets[i])
 		} else {
-			// Finalize current cluster and start a new one
-			consensusOnsets = append(consensusOnsets, calculateClusterMidpoint(currentCluster))
+			// Finalize current cluster if it meets minimum size requirement
+			if len(currentCluster) >= minClusterSize {
+				consensusOnsets = append(consensusOnsets, calculateClusterMidpoint(currentCluster))
+			}
 			currentCluster = []float64{allOnsets[i]}
 		}
 	}
 
-	// Don't forget the last cluster
-	if len(currentCluster) > 0 {
+	// Don't forget the last cluster if it meets minimum size requirement
+	if len(currentCluster) >= minClusterSize {
 		consensusOnsets = append(consensusOnsets, calculateClusterMidpoint(currentCluster))
 	}
 
 	// If targetSlices is specified, select the best N based on cluster size and energy
-	if targetSlices > 0 && len(consensusOnsets) > targetSlices {
+	if options.NumSlices > 0 && len(consensusOnsets) > options.NumSlices {
 		// For consensus, we could rank by cluster size (more methods agreeing)
 		// But for simplicity, we'll use energy like in findBestOnsets
 		onsetsWithEnergy := make([]onsetWithEnergy, len(consensusOnsets))
@@ -258,7 +271,7 @@ func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) [
 		})
 
 		// Take top N onsets
-		bestOnsets := onsetsWithEnergy[:targetSlices]
+		bestOnsets := onsetsWithEnergy[:options.NumSlices]
 
 		// Sort back by time for output
 		sort.Slice(bestOnsets, func(i, j int) bool {
@@ -278,17 +291,100 @@ func findConsensusOnsets(samples []float64, sampleRate uint, targetSlices int) [
 }
 
 // calculateClusterMidpoint calculates the midpoint of a cluster of onset times
+// after removing outliers using the IQR method
 func calculateClusterMidpoint(cluster []float64) float64 {
 	if len(cluster) == 0 {
 		return 0.0
 	}
 
+	// For small clusters (< 4), don't remove outliers
+	if len(cluster) < 4 {
+		sum := 0.0
+		for _, time := range cluster {
+			sum += time
+		}
+		return sum / float64(len(cluster))
+	}
+
+	// Remove outliers using IQR method
+	cleanedCluster := removeOutliers(cluster)
+
+	// If all values were outliers (shouldn't happen), use original cluster
+	if len(cleanedCluster) == 0 {
+		cleanedCluster = cluster
+	}
+
 	sum := 0.0
-	for _, time := range cluster {
+	for _, time := range cleanedCluster {
 		sum += time
 	}
 
-	return sum / float64(len(cluster))
+	return sum / float64(len(cleanedCluster))
+}
+
+// removeOutliers removes outliers from a cluster using the IQR (Interquartile Range) method
+func removeOutliers(data []float64) []float64 {
+	if len(data) < 4 {
+		return data
+	}
+
+	// Create a sorted copy
+	sorted := make([]float64, len(data))
+	copy(sorted, data)
+	sort.Float64s(sorted)
+
+	// Calculate Q1, Q2 (median), and Q3
+	q1 := calculatePercentile(sorted, 25)
+	q3 := calculatePercentile(sorted, 75)
+
+	// Calculate IQR
+	iqr := q3 - q1
+
+	// Define outlier bounds (using 1.5 * IQR, standard for outlier detection)
+	lowerBound := q1 - 1.5*iqr
+	upperBound := q3 + 1.5*iqr
+
+	// Filter out outliers
+	var result []float64
+	for _, value := range data {
+		if value >= lowerBound && value <= upperBound {
+			result = append(result, value)
+		}
+	}
+
+	return result
+}
+
+// calculatePercentile calculates the nth percentile of a sorted array
+func calculatePercentile(sorted []float64, percentile float64) float64 {
+	if len(sorted) == 0 {
+		return 0.0
+	}
+
+	if len(sorted) == 1 {
+		return sorted[0]
+	}
+
+	// Calculate the rank
+	rank := (percentile / 100.0) * float64(len(sorted)-1)
+	lowerIndex := int(math.Floor(rank))
+	upperIndex := int(math.Ceil(rank))
+
+	// Handle edge cases
+	if lowerIndex < 0 {
+		lowerIndex = 0
+	}
+	if upperIndex >= len(sorted) {
+		upperIndex = len(sorted) - 1
+	}
+
+	// Linear interpolation between the two nearest ranks
+	if lowerIndex == upperIndex {
+		return sorted[lowerIndex]
+	}
+
+	weight := rank - float64(lowerIndex)
+	return sorted[lowerIndex]*(1-weight) + sorted[upperIndex]*weight
 }
 
 // detectAllOnsets detects all onsets with relaxed parameters
