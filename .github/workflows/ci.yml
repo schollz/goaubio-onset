@@ -30,13 +30,13 @@ jobs:
       run: go mod download
 
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
       if: matrix.os == 'ubuntu-latest'
       with:
-        file: ./coverage.out
+        file: ./coverage.txt
         flags: unittests
         name: codecov-umbrella
         fail_ci_if_error: false
