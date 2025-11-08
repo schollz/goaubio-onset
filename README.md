@@ -205,4 +205,4 @@ This library is a Go implementation of onset detection from [aubio](https://gith
 
 ## License
 
-GPL-3.0 (consistent with the original aubio library)
+MIT
