@@ -19,6 +19,7 @@ func main() {
 	outputFile := flag.String("output", "waveform.html", "Output HTML file (default: waveform.html)")
 	optimizeOnsets := flag.Bool("optimize", true, "Optimize onset positions using RMS differential (default: true)")
 	optimizeWindowMs := flag.Float64("optimize-window", 100.0, "Window size in milliseconds for onset optimization (default: 100.0)")
+	method := flag.String("method", "hfc", "Onset detection method: hfc, energy, complex, phase, wphase, specdiff, kl, mkl, specflux, consensus (default: hfc)")
 	flag.Parse()
 
 	if *soundFile == "" {
@@ -37,6 +38,7 @@ func main() {
 		NumSlices:        *numSlices,
 		Optimize:         *optimizeOnsets,
 		OptimizeWindowMs: *optimizeWindowMs,
+		Method:           *method,
 	}
 
 	result, err := onset.AnalyzeSlices(*soundFile, options)
@@ -48,6 +50,7 @@ func main() {
 	fmt.Printf("  Samples: %d\n", len(result.Samples))
 	fmt.Printf("  Sample Rate: %d Hz\n", result.SampleRate)
 	fmt.Printf("  Duration: %.2f seconds\n", float64(len(result.Samples))/float64(result.SampleRate))
+	fmt.Printf("  Method: %s\n", *method)
 	if *numSlices > 0 {
 		fmt.Printf("  Finding best %d slices...\n", *numSlices)
 	} else {
