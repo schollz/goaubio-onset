@@ -2,15 +2,15 @@ package onset
 
 // PeakPicker represents a peak picking object for onset detection
 type PeakPicker struct {
-	Threshold      float64
-	WinPost        uint
-	WinPre         uint
-	Biquad         *Filter
-	OnsetKeep      *Fvec
-	OnsetProc      *Fvec
-	OnsetPeek      *Fvec
-	Thresholded    *Fvec
-	Scratch        *Fvec
+	Threshold   float64
+	WinPost     uint
+	WinPre      uint
+	Biquad      *Filter
+	OnsetKeep   *Fvec
+	OnsetProc   *Fvec
+	OnsetPeek   *Fvec
+	Thresholded *Fvec
+	Scratch     *Fvec
 }
 
 // NewPeakPicker creates a new peak picker

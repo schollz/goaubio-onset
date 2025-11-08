@@ -112,7 +112,7 @@ func (f *Fvec) LocalEnergyDB() float64 {
 		energy += v * v
 	}
 	if energy > 0 {
-		return 10.0 * math.Log10(energy / float64(f.Length))
+		return 10.0 * math.Log10(energy/float64(f.Length))
 	}
 	return -90.0
 }

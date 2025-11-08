@@ -2,11 +2,11 @@ package onset
 
 // Filter represents a digital filter
 type Filter struct {
-	Order  uint
-	A      []float64 // feedback coefficients
-	B      []float64 // feedforward coefficients
-	X      []float64 // input history
-	Y      []float64 // output history
+	Order uint
+	A     []float64 // feedback coefficients
+	B     []float64 // feedforward coefficients
+	X     []float64 // input history
+	Y     []float64 // output history
 }
 
 // NewFilter creates a new filter with given order

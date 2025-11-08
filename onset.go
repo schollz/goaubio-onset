@@ -6,22 +6,22 @@ import (
 
 // Onset represents an onset detection object
 type Onset struct {
-	Pv                  *Pvoc
-	Od                  *Specdesc
-	Pp                  *PeakPicker
-	Fftgrain            *Cvec
-	Desc                *Fvec
-	Silence             float64
-	Minioi              uint
-	Delay               uint
-	Samplerate          uint
-	HopSize             uint
-	TotalFrames         uint
-	LastOnset           uint
-	ApplyCompression    bool
-	LambdaCompression   float64
-	ApplyAWhitening     bool
-	SpectralWhitening   *SpectralWhitening
+	Pv                *Pvoc
+	Od                *Specdesc
+	Pp                *PeakPicker
+	Fftgrain          *Cvec
+	Desc              *Fvec
+	Silence           float64
+	Minioi            uint
+	Delay             uint
+	Samplerate        uint
+	HopSize           uint
+	TotalFrames       uint
+	LastOnset         uint
+	ApplyCompression  bool
+	LambdaCompression float64
+	ApplyAWhitening   bool
+	SpectralWhitening *SpectralWhitening
 }
 
 // NewOnset creates a new onset detection object
